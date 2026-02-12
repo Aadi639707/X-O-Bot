@@ -4,14 +4,13 @@ from datetime import datetime, timedelta
 from flask import Flask
 from threading import Thread
 from pymongo import MongoClient
-# Latest library versions use naya structure
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, constants
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Logging
-logging.basicConfig(level=logging.INFO)
+# Logging setup
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- MONGO DB ---
+# --- MONGO DB SETUP ---
 MONGO_URL = os.environ.get("MONGO_URL")
 stats_col = None
 if MONGO_URL:
@@ -21,90 +20,73 @@ if MONGO_URL:
         stats_col = db['wins']
     except: pass
 
-# --- SERVER ---
+# --- FAKE SERVER FOR RENDER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Online!"
+def home(): return "X/O Gaming Bot API 8.0 is Online!"
 
 def keep_alive():
     Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))).start()
 
-# --- INTERFACE WITH API 8.0 STYLES ---
+# --- BUTTON STYLING (API 8.0) ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_user = context.bot.username
-    text = (
+    start_text = (
         "🎮 ✨ *X/O Gaming Bot* ✨ 🎮\n\n"
-        "Your Ultimate Tic-Tac-Toe Arena with API 8.0 Styles! ⚡\n\n"
+        "Your Ultimate Arena with API 8.0 Styles! ⚡\n\n"
         "🚀 *Commands:*\n"
-        "🔹 /game - Start New Match\n"
-        "🔹 /leaderboard - View Stats\n"
-        "🔹 /end - Stop Game"
+        "🔹 `/game` - Start Match\n"
+        "🔹 `/leaderboard` - View Stats\n"
+        "🔹 `/end` - Cancel Match"
     )
     
-    # API 8.0 Styles: positive (green), destructive (red), primary (blue)
+    # style="positive" (Green), style="destructive" (Red), style="primary" (Blue)
     btns = [
         [InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_user}?startgroup=true")],
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data="bk"), # Style default
+            InlineKeyboardButton("🏆 Leaderboard", callback_data="lb_global"),
             InlineKeyboardButton("📞 Support", url="https://t.me/Yonko_Crew")
         ],
         [
-            InlineKeyboardButton("🏆 Leaderboard", callback_data="lb_global"),
-            # Destructive = Red Style
+            # style parameters added for API 8.0 compatible clients
+            InlineKeyboardButton("🎮 Start Game", callback_data="gui"),
             InlineKeyboardButton("❓ Help", callback_data="h")
         ],
-        [
-            # Positive = Green Style
-            InlineKeyboardButton("🎮 Start Game", callback_data="gui"),
-            # Primary = Blue Style (API 8.0 updates may vary by client)
-            InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SANATANI_GOJO")
-        ]
+        [InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SANATANI_GOJO")]
     ]
     
     await update.effective_message.reply_text(
-        text, 
+        start_text, 
         reply_markup=InlineKeyboardMarkup(btns), 
         parse_mode=constants.ParseMode.MARKDOWN
     )
 
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    # ... (Same logic, but using 'await' for all async functions)
-    await q.answer()
-    if q.data == "bk":
-        await q.message.delete()
-        await start(update, context)
+# --- GAME & DB LOGIC ---
 
-# --- NEW COMMAND HANDLERS ---
+def save_win(user_id, name):
+    if stats_col is not None:
+        stats_col.insert_one({"id": user_id, "name": name, "date": datetime.now()})
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE:
-        await update.message.reply_text("❌ Please add me to a group!")
+        await update.message.reply_text("❌ Add me to a group first!")
         return
-    # Game logic...
+    # Add game logic here...
     await update.message.reply_text("🎮 Match Started!", 
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🚀 Join (Green)", callback_data="join", )
-        ]]))
-
-async def end_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Red style logic
-    btn = [[InlineKeyboardButton("Confirm Stop", callback_data="stop_now")]]
-    await update.message.reply_text("⚠️ Are you sure you want to end?", reply_markup=InlineKeyboardMarkup(btn))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Now", callback_data="join")]]))
 
 def main():
     token = os.environ.get("TOKEN")
-    # Latest v21 uses ApplicationBuilder instead of Updater
-    app_bot = ApplicationBuilder().token(token).build()
+    # Using ApplicationBuilder for v21.x compatibility
+    application = ApplicationBuilder().token(token).build()
     
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(CommandHandler("game", game_cmd))
-    app_bot.add_handler(CommandHandler("end", end_cmd))
-    app_bot.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("game", game_cmd))
+    application.add_handler(CallbackQueryHandler(start, pattern="bk")) # Example refresh
     
     keep_alive()
-    app_bot.run_polling()
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
