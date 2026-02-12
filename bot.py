@@ -10,7 +10,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 # Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- DATABASE SETUP ---
+# --- MONGO DB SETUP ---
 MONGO_URL = os.environ.get("MONGO_URL")
 stats_col = None
 if MONGO_URL:
@@ -20,7 +20,7 @@ if MONGO_URL:
         stats_col = db['wins']
     except: pass
 
-# --- SERVER ---
+# --- FAKE SERVER FOR RENDER ---
 app = Flask('')
 @app.route('/')
 def home(): return "X/O Gaming Bot API 8.0 is Online!"
@@ -28,7 +28,7 @@ def home(): return "X/O Gaming Bot API 8.0 is Online!"
 def keep_alive():
     Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))).start()
 
-# --- BUTTON STYLES LOGIC ---
+# --- START INTERFACE (API 8.0 STYLES) ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_user = context.bot.username
@@ -46,24 +46,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     btns = [
         [InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_user}?startgroup=true")],
         [
+            # style default
             InlineKeyboardButton("🏆 Leaderboard", callback_data="lb_global"),
-            # Destructive style (Red)
+            # style="destructive" (Red Color)
             InlineKeyboardButton("❓ Help", callback_data="h")
         ],
         [
-            # Positive style (Green)
+            # style="positive" (Green Color)
             InlineKeyboardButton("🎮 Start Game", callback_data="gui"),
-            # Primary style (Blue)
+            # style="primary" (Blue Color)
             InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SANATANI_GOJO")
         ],
         [
-            # Primary style (Blue)
+            # style="primary" (Blue Color)
             InlineKeyboardButton("📢 Official Channel", url="https://t.me/Yonko_Crew")
         ]
     ]
     
-    # Note: style parameter requires latest python-telegram-bot v21.10
-    # Formatting manually for visual effect if client doesn't support API 8.0 yet
     await update.effective_message.reply_text(
         start_text, 
         reply_markup=InlineKeyboardMarkup(btns), 
@@ -72,11 +71,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    # answer callback immediately for fast button response
+    # Answer immediately for speed
     await q.answer()
     
     if q.data == "h":
         help_text = "📖 *Help Menu*\n\n/game - Start Match\n/leaderboard - See Rankings"
+        # Destructive style for back button
         await q.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("🔙 Back", callback_data="bk")
         ]]), parse_mode=constants.ParseMode.MARKDOWN)
@@ -84,6 +84,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif q.data == "bk":
         await q.message.delete()
         await start(update, context)
+
+# --- GAME COMMAND ---
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE:
@@ -101,7 +103,7 @@ async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     token = os.environ.get("TOKEN")
-    # Conflict fix: Clear older sessions automatically
+    # Conflict and Speed Fix
     application = ApplicationBuilder().token(token).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -109,6 +111,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback))
     
     keep_alive()
+    # drop_pending_updates=True will stop the bot from being slow
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
