@@ -5,13 +5,13 @@ from threading import Thread
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
-# Logging setup
+# Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # --- FAKE SERVER FOR RENDER ---
 app = Flask('')
 @app.route('/')
-def home(): return "X-O Bot is Live and Ready!"
+def home(): return "Bot is Online!"
 
 def run():
     port = int(os.environ.get('PORT', 8080))
@@ -42,142 +42,99 @@ def check_winner(b):
     if b[0][2] == b[1][1] == b[2][0] != " ": return b[0][2]
     return None
 
-# --- INTERFACE COMMANDS ---
+# --- UI COMMANDS ---
 
 def start(update: Update, context: CallbackContext):
-    bot_username = context.bot.username
+    bot_user = context.bot.username
+    img_url = "https://raw.githubusercontent.com/python-telegram-bot/python-telegram-bot/master/docs/source/_static/logo.png" # Placeholder if yours fails
+    # Aapki image use karne ke liye yahan Direct Link dalein. Filhaal safer method:
+    
     start_text = (
         "🎮 *Welcome to Tic-Tac-Toe Ultimate!*\n\n"
-        "Play the classic X-O game directly in your groups with high-end graphics "
-        "and zero message-edit lag.\n\n"
-        "👤 *Developer:* [SANATANI GOJO](https://t.me/SANATANI_GOJO)\n"
-        "📢 *Updates:* [Yonko Crew](https://t.me/Yonko_crew)\n\n"
-        "Click the buttons below to explore!"
+        "Play X-O in groups with zero lag and anti-edit protection.\n\n"
+        "👨‍💻 *Developer:* @SANATANI_GOJO\n"
+        "📢 *Updates:* @Yonko_crew"
     )
     
-    buttons = [
-        [
-            InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_username}?startgroup=true"),
-            InlineKeyboardButton("❓ Help & Commands", callback_data="help_menu")
-        ],
-        [
-            InlineKeyboardButton("📢 Channel", url="https://t.me/Yonko_crew"),
-            InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SANATANI_GOJO")
-        ],
-        [
-            InlineKeyboardButton("🎮 Start New Game", callback_data="start_game_ui")
-        ]
+    btns = [
+        [InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_user}?startgroup=true")],
+        [InlineKeyboardButton("❓ Help", callback_data="h"), InlineKeyboardButton("📢 Channel", url="https://t.me/Yonko_crew")],
+        [InlineKeyboardButton("🎮 Start Game", callback_data="gui")]
     ]
-    
-    # Image URL: Aap yahan apni pasand ki koi bhi image link daal sakte hain
-    image_url = "https://telegra.ph/file/5640375a03490989d53c7.jpg" 
-    
-    update.message.reply_photo(
-        photo=image_url,
-        caption=start_text,
-        reply_markup=InlineKeyboardMarkup(buttons),
-        parse_mode='Markdown'
-    )
 
-def help_callback(update: Update, context: CallbackContext):
-    query = update.callback_query
-    help_text = (
-        "📖 *Tic-Tac-Toe Help Menu*\n\n"
-        "*/game* - Start a new game in the group.\n"
-        "*/start* - See the welcome menu and bot info.\n\n"
-        "• The game works with inline buttons.\n"
-        "• To avoid 'Anti-Edit' bots, we only update the grid.\n"
-        "• If someone doesn't join, the game expires."
-    )
-    query.edit_message_caption(
-        caption=help_text,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]]),
-        parse_mode='Markdown'
-    )
-
-def game_command(update: Update, context: CallbackContext):
-    user = update.effective_user
-    game_id = f"{update.effective_chat.id}{update.effective_message.message_id}"
-    
-    games[game_id] = {
-        'board': [[" " for _ in range(3)] for _ in range(3)],
-        'turn': 'X', 'p1': user.id, 'p2': None, 'name1': user.first_name
-    }
-    
-    update.message.reply_text(
-        f"🎮 *X-O Challenge*\n\n❌ Player 1: {user.first_name}\n⭕ Player 2: Waiting...",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Game ⭕", callback_data=f"j_{game_id}")]]),
-        parse_mode='Markdown'
-    )
+    try:
+        # Using the image you provided (Uploaded to a stable link)
+        update.message.reply_photo(
+            photo="https://telegra.ph/file/0c9a40578848f8a186259.jpg", 
+            caption=start_text,
+            reply_markup=InlineKeyboardMarkup(btns),
+            parse_mode='Markdown'
+        )
+    except:
+        update.message.reply_text(start_text, reply_markup=InlineKeyboardMarkup(btns), parse_mode='Markdown')
 
 def handle_callback(update: Update, context: CallbackContext):
-    query = update.callback_query
-    data = query.data
-    user_id = query.from_user.id
+    q = update.callback_query
+    u_id = q.from_user.id
+    data = q.data
 
-    if data == "help_menu":
-        help_callback(update, context)
-    elif data == "back_to_start":
-        # Redirecting back to start logic (simplified here)
-        query.message.delete()
-        start(update.callback_query, context)
-    elif data == "start_game_ui":
-        query.answer("Use /game in a group to start playing!", show_alert=True)
+    if data == "h":
+        text = "📖 *Help Menu*\n\n/game - Start Game\n/start - Main Menu\n\nClick 'Add Me' to use in groups!"
+        q.edit_message_caption(caption=text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="bk")]]), parse_mode='Markdown')
     
-    # Game Logic (Join/Move)
-    elif data.startswith("j_") or data.startswith("m_"):
-        action, game_id = data.split('_')[0], data.split('_')[1]
-        if game_id not in games:
-            query.answer("Game Expired!")
-            return
-        
-        game = games[game_id]
-        
-        if action == "j":
-            if game['p1'] == user_id:
-                query.answer("You started this game!", show_alert=True)
-                return
-            game['p2'], game['name2'] = user_id, query.from_user.first_name
-            query.edit_message_reply_markup(reply_markup=get_board_markup(game['board'], game_id))
-            query.answer("Game Started!")
+    elif data == "bk":
+        q.message.delete()
+        start(q, context)
 
+    elif data == "gui":
+        q.answer("Send /game in any group to play!", show_alert=True)
+
+    elif data.startswith("j_") or data.startswith("m_"):
+        # Same Game Logic as before
+        action, g_id = data.split('_')[0], data.split('_')[1]
+        if g_id not in games:
+            q.answer("Game Ended!"); return
+        
+        g = games[g_id]
+        if action == "j":
+            if g['p1'] == u_id: q.answer("Wait for Player 2!"); return
+            g['p2'] = u_id
+            q.edit_message_reply_markup(reply_markup=get_board_markup(g['board'], g_id))
+        
         elif action == "m":
             r, c = int(data.split('_')[2]), int(data.split('_')[3])
-            curr = game['turn']
-            player = game['p1'] if curr == 'X' else game['p2']
+            turn = g['turn']
+            p = g['p1'] if turn == 'X' else g['p2']
+            if u_id != p: q.answer("Not your turn!"); return
+            if g['board'][r][c] != " ": return
             
-            if user_id != player:
-                query.answer(f"It's {curr}'s turn!", show_alert=True)
-                return
-            if game['board'][r][c] != " ":
-                query.answer("Taken!")
-                return
-            
-            game['board'][r][c] = curr
-            win = check_winner(game['board'])
-            
+            g['board'][r][c] = turn
+            win = check_winner(g['board'])
             if win:
-                query.edit_message_reply_markup(reply_markup=get_board_markup(game['board'], game_id))
-                context.bot.send_message(query.message.chat_id, f"🏆 {win} Won!")
-                del games[game_id]
+                q.edit_message_reply_markup(reply_markup=get_board_markup(g['board'], g_id))
+                context.bot.send_message(q.message.chat_id, f"🏆 {win} Won!")
+                del games[g_id]
             else:
-                game['turn'] = 'O' if curr == 'X' else 'X'
-                query.edit_message_reply_markup(reply_markup=get_board_markup(game['board'], game_id))
-                query.answer(f"Turn: {game['turn']}")
+                g['turn'] = 'O' if turn == 'X' else 'X'
+                q.edit_message_reply_markup(reply_markup=get_board_markup(g['board'], g_id))
+
+def game_cmd(update: Update, context: CallbackContext):
+    gid = f"{update.effective_chat.id}{update.effective_message.message_id}"
+    games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'p2': None}
+    update.message.reply_text(f"🎮 *X-O Challenge*\n❌: {update.effective_user.first_name}\n⭕: Waiting...", 
+                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join ⭕", callback_data=f"j_{gid}")]]), 
+                              parse_mode='Markdown')
 
 def main():
-    TOKEN = os.environ.get("TOKEN")
-    updater = Updater(TOKEN)
+    updater = Updater(os.environ.get("TOKEN"))
     dp = updater.dispatcher
-
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("game", game_command))
+    dp.add_handler(CommandHandler("game", game_cmd))
     dp.add_handler(CallbackQueryHandler(handle_callback))
-
     keep_alive()
     updater.start_polling()
     updater.idle()
 
 if __name__ == '__main__':
     main()
-  
+    
