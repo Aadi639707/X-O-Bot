@@ -23,9 +23,9 @@ if MONGO_URL:
         client = MongoClient(MONGO_URL)
         db = client['xo_premium_db']
         stats_col = db['wins']
-        logger.info("MongoDB Connected Successfully! ✅")
+        logger.info("MongoDB Connected! ✅")
     except Exception as e: 
-        logger.error(f"MongoDB Error: {e}")
+        logger.error(f"DB Error: {e}")
 
 # --- SERVER FOR RENDER ---
 app = Flask('')
@@ -39,7 +39,7 @@ def run_flask():
 games = {}
 
 def get_lb_text(mode="global"):
-    if stats_col is None: return "❌ Database connection error!"
+    if stats_col is None: return "❌ Database connection issue!"
     now = datetime.now()
     query = {}
     if mode == "today": 
@@ -55,7 +55,7 @@ def get_lb_text(mode="global"):
     ]
     results = list(stats_col.aggregate(pipeline))
     
-    if not results: return f"🏆 *{mode.upper()} LEADERBOARD*\n\nNo records found yet! 🔥"
+    if not results: return f"🏆 *{mode.upper()} LEADERBOARD*\n\nNo records yet! 🔥"
     
     text = f"🎊 *TOP PLAYERS - {mode.upper()}* 🎊\n\n"
     emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
@@ -105,7 +105,7 @@ async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gid = str(update.effective_chat.id)
     games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None}
     await update.message.reply_text(f"🎮 *X-O Match Started!*\n❌: {update.effective_user.first_name}\n\nWaiting for Player 2...", 
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"j_{gid}")]]), 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"j_{gid}")]])), 
         parse_mode=constants.ParseMode.MARKDOWN)
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
