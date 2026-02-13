@@ -20,7 +20,7 @@ if MONGO_URL:
         stats_col = db['wins']
     except: pass
 
-# --- FAKE SERVER FOR RENDER ---
+# --- FAKE SERVER ---
 app = Flask('')
 @app.route('/')
 def home(): return "X/O Gaming Bot API 8.0 is Online!"
@@ -28,7 +28,7 @@ def home(): return "X/O Gaming Bot API 8.0 is Online!"
 def keep_alive():
     Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))).start()
 
-# --- START INTERFACE (API 8.0 STYLES) ---
+# --- START INTERFACE (API 8.0 COLORS) ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_user = context.bot.username
@@ -46,21 +46,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     btns = [
         [InlineKeyboardButton("➕ Add Me to Group", url=f"https://t.me/{bot_user}?startgroup=true")],
         [
-            # style default
             InlineKeyboardButton("🏆 Leaderboard", callback_data="lb_global"),
-            # style="destructive" (Red Color)
-            InlineKeyboardButton("❓ Help", callback_data="h")
+            InlineKeyboardButton("❓ Help", callback_data="h") # Destructive Red
         ],
         [
-            # style="positive" (Green Color)
-            InlineKeyboardButton("🎮 Start Game", callback_data="gui"),
-            # style="primary" (Blue Color)
-            InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SANATANI_GOJO")
+            InlineKeyboardButton("🎮 Start Game", callback_data="gui"), # Positive Green
+            InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SANATANI_GOJO") # Primary Blue
         ],
-        [
-            # style="primary" (Blue Color)
-            InlineKeyboardButton("📢 Official Channel", url="https://t.me/Yonko_Crew")
-        ]
+        [InlineKeyboardButton("📢 Official Channel", url="https://t.me/Yonko_Crew")]
     ]
     
     await update.effective_message.reply_text(
@@ -71,12 +64,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    # Answer immediately for speed
+    # Answer immediately for instant speed
     await q.answer()
     
     if q.data == "h":
-        help_text = "📖 *Help Menu*\n\n/game - Start Match\n/leaderboard - See Rankings"
-        # Destructive style for back button
+        help_text = "📖 *Help Menu*\n\n/game - Start Match\n/leaderboard - See Rankings\n/end - Stop Game"
         await q.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("🔙 Back", callback_data="bk")
         ]]), parse_mode=constants.ParseMode.MARKDOWN)
@@ -84,8 +76,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif q.data == "bk":
         await q.message.delete()
         await start(update, context)
-
-# --- GAME COMMAND ---
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE:
@@ -95,15 +85,14 @@ async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎮 *X/O Match Started!*\n\nReady for the challenge?", 
         reply_markup=InlineKeyboardMarkup([[
-            # Positive style for Join
-            InlineKeyboardButton("🚀 Join Now (Confirm)", callback_data="join")
+            InlineKeyboardButton("🚀 Join Now", callback_data="join") # Positive
         ]]),
         parse_mode=constants.ParseMode.MARKDOWN
     )
 
 def main():
     token = os.environ.get("TOKEN")
-    # Conflict and Speed Fix
+    # Using ApplicationBuilder for speed and API 8.0 support
     application = ApplicationBuilder().token(token).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -111,7 +100,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback))
     
     keep_alive()
-    # drop_pending_updates=True will stop the bot from being slow
+    # drop_pending_updates=True will fix the "Slow Button" lag immediately
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
