@@ -24,7 +24,8 @@ if MONGO_URL:
         client = MongoClient(MONGO_URL)
         db = client['xo_premium_db']
         stats_col = db['wins']
-    except: pass
+    except: 
+        logger.error("MongoDB Connection Failed!")
 
 # --- APP SETUP ---
 app = Flask(__name__)
@@ -83,9 +84,23 @@ async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     gid = str(update.effective_chat.id)
     games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None}
-    await update.message.reply_text(f"🎮 *X-O Challenge*\n❌: {update.effective_user.first_name}\n\nWaiting for Player 2...", 
-                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Now", callback_data=f"j_{gid}")]])), 
-                                    parse_mode=constants.ParseMode.MARKDOWN)
+    await update.message.reply_text(
+        f"🎮 *X-O Challenge*\n❌: {update.effective_user.first_name}\n\nWaiting for Player 2...", 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Now", callback_data=f"j_{gid}")]]), 
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = "📖 *Help Menu*\n\n/game - Start Match\n/leaderboard - See Rankings\n/end - Stop Game"
+    await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
+
+async def end_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    gid = str(update.effective_chat.id)
+    if gid in games:
+        del games[gid]
+        await update.message.reply_text("🛑 Game has been ended.")
+    else:
+        await update.message.reply_text("No active game found.")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -166,7 +181,10 @@ if __name__ == "__main__":
     
     ptb_app.add_handler(CommandHandler("start", start))
     ptb_app.add_handler(CommandHandler("game", game_cmd))
+    ptb_app.add_handler(CommandHandler("leaderboard", lb_cmd))
+    ptb_app.add_handler(CommandHandler("help", help_cmd))
+    ptb_app.add_handler(CommandHandler("end", end_cmd))
     ptb_app.add_handler(CallbackQueryHandler(handle_callback))
     
     app.run(host="0.0.0.0", port=PORT)
-    
+        
