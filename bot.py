@@ -17,22 +17,23 @@ URL = os.environ.get("RENDER_EXTERNAL_URL")
 PORT = int(os.environ.get("PORT", 8080))
 MONGO_URL = os.environ.get("MONGO_URL")
 
-# --- DATABASE ---
+# --- DATABASE CONNECTION ---
 stats_col = None
 if MONGO_URL:
     try:
         client = MongoClient(MONGO_URL)
         db = client['xo_premium_db']
         stats_col = db['wins']
-    except: 
-        logger.error("MongoDB Connection Failed!")
+        logger.info("MongoDB Connected Successfully!")
+    except Exception as e: 
+        logger.error(f"MongoDB Connection Failed: {e}")
 
 # --- APP SETUP ---
 app = Flask(__name__)
 ptb_app = Application.builder().token(TOKEN).build()
 games = {}
 
-# --- HELPER FUNCTIONS ---
+# --- LEADERBOARD LOGIC ---
 def save_win(user_id, name):
     if stats_col is not None:
         stats_col.insert_one({"id": user_id, "name": name, "date": datetime.now()})
@@ -45,7 +46,12 @@ def get_lb_text(mode="global"):
     elif mode == "week": query = {"date": {"$gte": now - timedelta(days=7)}}
     elif mode == "month": query = {"date": {"$gte": now - timedelta(days=30)}}
 
-    pipeline = [{"$match": query}, {"$group": {"_id": "$id", "name": {"$first": "$name"}, "count": {"$sum": 1}}}, {"$sort": {"count": -1}}, {"$limit": 10}]
+    pipeline = [
+        {"$match": query}, 
+        {"$group": {"_id": "$id", "name": {"$first": "$name"}, "count": {"$sum": 1}}}, 
+        {"$sort": {"count": -1}}, 
+        {"$limit": 10}
+    ]
     results = list(stats_col.aggregate(pipeline))
     if not results: return f"🏆 *{mode.upper()} LEADERBOARD*\n\nNo records yet! 🔥"
     
@@ -55,17 +61,30 @@ def get_lb_text(mode="global"):
         text += f"{emojis[i]} {user['name']} — `{user['count']} Wins`\n"
     return text
 
-# --- COMMANDS ---
+# --- GAME HELPERS ---
+def get_board_markup(board, gid):
+    return InlineKeyboardMarkup([[InlineKeyboardButton(board[r][c] if board[r][c] != " " else "·", callback_data=f"m_{gid}_{r}_{c}") for c in range(3)] for r in range(3)])
+
+def check_winner(b):
+    for i in range(3):
+        if b[i][0] == b[i][1] == b[i][2] != " ": return b[i][0]
+        if b[0][i] == b[1][i] == b[2][i] != " ": return b[0][i]
+    if b[0][0] == b[1][1] == b[2][2] != " ": return b[0][0]
+    if b[0][2] == b[1][1] == b[2][0] != " ": return b[0][2]
+    return None
+
+# --- COMMAND HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_user = context.bot.username
     text = (
         "🎮 ✨ *X/O Gaming Bot* ✨ 🎮\n\n"
-        "Ultimate Tic-Tac-Toe Arena ⚡\n"
+        "Your Ultimate Tic-Tac-Toe Arena ⚡\n"
         "API 8.0 Colorful Styles Active! 🎨\n\n"
         "🚀 *Commands:*\n"
         "🔹 /game - Start Match\n"
         "🔹 /leaderboard - View Stats\n"
+        "🔹 /help - Bot Guide\n"
         "🔹 /end - Stop Match"
     )
     btns = [
@@ -86,9 +105,16 @@ async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None}
     await update.message.reply_text(
         f"🎮 *X-O Challenge*\n❌: {update.effective_user.first_name}\n\nWaiting for Player 2...", 
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Now", callback_data=f"j_{gid}")]]), 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Now", callback_data=f"j_{gid}")]])), 
         parse_mode=constants.ParseMode.MARKDOWN
     )
+
+async def lb_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lb_btns = [
+        [InlineKeyboardButton("Today", callback_data="lb_today"), InlineKeyboardButton("Week", callback_data="lb_week")],
+        [InlineKeyboardButton("Month", callback_data="lb_month"), InlineKeyboardButton("Global", callback_data="lb_global")]
+    ]
+    await update.effective_message.reply_text(get_lb_text("global"), reply_markup=InlineKeyboardMarkup(lb_btns), parse_mode=constants.ParseMode.MARKDOWN)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📖 *Help Menu*\n\n/game - Start Match\n/leaderboard - See Rankings\n/end - Stop Game"
@@ -101,6 +127,8 @@ async def end_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🛑 Game has been ended.")
     else:
         await update.message.reply_text("No active game found.")
+
+# --- CALLBACK HANDLER ---
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -148,18 +176,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 g['turn'] = 'O' if g['turn'] == 'X' else 'X'
                 await q.edit_message_reply_markup(reply_markup=get_board_markup(g['board'], gid))
 
-def get_board_markup(board, gid):
-    return InlineKeyboardMarkup([[InlineKeyboardButton(board[r][c] if board[r][c] != " " else "·", callback_data=f"m_{gid}_{r}_{c}") for c in range(3)] for r in range(3)])
+# --- WEBHOOK & APP ENGINE ---
 
-def check_winner(b):
-    for i in range(3):
-        if b[i][0] == b[i][1] == b[i][2] != " ": return b[i][0]
-        if b[0][i] == b[1][i] == b[2][i] != " ": return b[0][i]
-    if b[0][0] == b[1][1] == b[2][2] != " ": return b[0][0]
-    if b[0][2] == b[1][1] == b[2][0] != " ": return b[0][2]
-    return None
-
-# --- WEBHOOK ROUTES ---
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
     update = Update.de_json(request.get_json(force=True), ptb_app.bot)
@@ -167,12 +185,13 @@ def telegram_webhook():
     return "OK", 200
 
 @app.route("/")
-def index(): return "X/O Bot is Live!"
+def index(): return "X/O Gaming Bot is LIVE! 🚀"
 
 async def init_bot():
     await ptb_app.initialize()
     await ptb_app.start()
     await ptb_app.bot.set_webhook(url=f"{URL}/{TOKEN}")
+    logger.info(f"Webhook set successfully: {URL}/{TOKEN}")
 
 if __name__ == "__main__":
     loop = asyncio.new_event_loop()
@@ -187,4 +206,3 @@ if __name__ == "__main__":
     ptb_app.add_handler(CallbackQueryHandler(handle_callback))
     
     app.run(host="0.0.0.0", port=PORT)
-        
