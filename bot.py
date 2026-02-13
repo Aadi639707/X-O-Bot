@@ -1,7 +1,6 @@
 import os
 import logging
-import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask
 from threading import Thread
 from pymongo import MongoClient
@@ -23,21 +22,42 @@ if MONGO_URL:
         client = MongoClient(MONGO_URL)
         db = client['xo_premium_db']
         stats_col = db['wins']
-    except: pass
+        logger.info("MongoDB Connected! ✅")
+    except Exception as e: 
+        logger.error(f"DB Error: {e}")
 
-# --- SERVER ---
+# --- SERVER FOR RENDER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Alive! 🚀"
+def home(): return "X/O Bot is Live!"
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
 
-# --- GAME LOGIC ---
+# --- LOGIC ---
 games = {}
 
+def save_win(user_id, name):
+    if stats_col is not None:
+        stats_col.insert_one({"id": user_id, "name": name, "date": datetime.now()})
+
+def get_lb_text(mode="global"):
+    if stats_col is None: return "❌ Database issue!"
+    now = datetime.now()
+    query = {}
+    if mode == "today": query = {"date": {"$gte": now.replace(hour=0, minute=0, second=0)}}
+    elif mode == "week": query = {"date": {"$gte": now - timedelta(days=7)}}
+
+    pipeline = [{"$match": query}, {"$group": {"_id": "$id", "name": {"$first": "$name"}, "count": {"$sum": 1}}}, {"$sort": {"count": -1}}, {"$limit": 10}]
+    results = list(stats_col.aggregate(pipeline))
+    if not results: return f"🏆 *{mode.upper()} LEADERBOARD*\n\nEmpty! 🔥"
+    
+    text = f"🎊 *TOP PLAYERS - {mode.upper()}* 🎊\n\n"
+    for i, user in enumerate(results):
+        text += f"{i+1}. {user['name']} — `{user['count']} Wins`\n"
+    return text
+
 def get_board_markup(board, gid):
-    # Board state ko buttons mein convert karna
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(board[r][c] if board[r][c] != " " else "·", callback_data=f"m_{gid}_{r}_{c}") for c in range(3)]
         for r in range(3)
@@ -54,103 +74,70 @@ def check_winner(b):
 # --- COMMANDS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("🎮 *X/O Arena Ready!*\n\nUse /game in groups.", parse_mode=constants.ParseMode.MARKDOWN)
+    await update.effective_message.reply_text("🎮 *X/O Arena Ready!*\n\n/game - Start\n/leaderboard - Stats", parse_mode=constants.ParseMode.MARKDOWN)
+
+async def lb_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    btns = [[InlineKeyboardButton("Today", callback_data="lb_today"), InlineKeyboardButton("Global", callback_data="lb_global")]]
+    await update.effective_message.reply_text(get_lb_text("global"), reply_markup=InlineKeyboardMarkup(btns), parse_mode=constants.ParseMode.MARKDOWN)
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE:
-        await update.message.reply_text("❌ Group mein shuru karein!")
+        await update.message.reply_text("❌ Groups mein chalao!")
         return
     gid = str(update.effective_chat.id)
-    # New Game Initialization
-    games[gid] = {
-        'board': [[" "]*3 for _ in range(3)], 
-        'turn': 'X', 
-        'p1': update.effective_user.id, 
-        'n1': update.effective_user.first_name, 
-        'p2': None, 'n2': None
-    }
-    await update.message.reply_text(
-        f"🎮 *X-O Match*\n❌: {update.effective_user.first_name}\n⭕: Waiting...",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"j_{gid}")]]),
-        parse_mode=constants.ParseMode.MARKDOWN
-    )
+    games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None}
+    await update.message.reply_text(f"🎮 *X-O Match*\n❌: {update.effective_user.first_name}\n\nWaiting...", 
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Match", callback_data=f"j_{gid}")]]), 
+                                    parse_mode=constants.ParseMode.MARKDOWN)
 
-# --- CALLBACK HANDLER (The Fix) ---
+# --- CALLBACKS ---
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    uid = q.from_user.id
-    data = q.data
-    
-    if data.startswith("j_"):
+    uid, data = q.from_user.id, q.data
+    await q.answer()
+
+    if data.startswith("lb_"):
+        mode = data.split("_")[1]
+        await q.edit_message_text(get_lb_text(mode), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="lb_global")]]), parse_mode=constants.ParseMode.MARKDOWN)
+
+    elif data.startswith("j_"):
         gid = data.split('_')[1]
-        if gid not in games: 
-            await q.answer("Game expired!")
-            return
-        g = games[gid]
-        if g['p1'] == uid:
-            await q.answer("Aapne hi game start kiya hai!", show_alert=True)
-            return
-        if g['p2'] is not None:
-            await q.answer("Game full hai!")
-            return
-        
-        g['p2'], g['n2'] = uid, q.from_user.first_name
-        await q.edit_message_text(
-            f"🎮 *Match Live!*\n❌: {g['n1']}\n⭕: {g['n2']}\n\nTurn: {g['n1']} (X)",
-            reply_markup=get_board_markup(g['board'], gid),
-            parse_mode=constants.ParseMode.MARKDOWN
-        )
+        if gid in games and games[gid]['p1'] != uid:
+            g = games[gid]
+            g['p2'], g['n2'] = uid, q.from_user.first_name
+            await q.edit_message_text(f"Match: {g['n1']} vs {g['n2']}\nTurn: {g['n1']} (X)", reply_markup=get_board_markup(g['board'], gid))
 
     elif data.startswith("m_"):
         _, gid, r, c = data.split('_')
         r, c = int(r), int(c)
         if gid not in games: return
         g = games[gid]
+        curr_id = g['p1'] if g['turn'] == 'X' else g['p2']
+        if uid != curr_id or g['board'][r][c] != " ": return
 
-        # Player check
-        current_id = g['p1'] if g['turn'] == 'X' else g['p2']
-        if uid != current_id:
-            await q.answer("Abhi aapki turn nahi hai!", show_alert=True)
-            return
-        
-        if g['board'][r][c] != " ":
-            await q.answer("Ye box pehle se bhara hai!")
-            return
-
-        # Update Board
         g['board'][r][c] = g['turn']
-        winner = check_winner(g['board'])
-        
-        if winner:
-            winner_name = g['n1'] if winner == 'X' else g['n2']
-            await q.edit_message_text(
-                f"🏆 *Match Over!*\nWinner: {winner_name} ({winner})",
-                reply_markup=get_board_markup(g['board'], gid),
-                parse_mode=constants.ParseMode.MARKDOWN
-            )
+        win = check_winner(g['board'])
+        if win:
+            name = g['n1'] if win == 'X' else g['n2']
+            await q.edit_message_text(f"🏆 Winner: {name}!", reply_markup=get_board_markup(g['board'], gid))
+            save_win(uid, name)
             del games[gid]
         elif all(cell != " " for row in g['board'] for cell in row):
-            await q.edit_message_text("🤝 *Draw Match!*", reply_markup=get_board_markup(g['board'], gid), parse_mode=constants.ParseMode.MARKDOWN)
+            await q.edit_message_text("🤝 Draw!", reply_markup=get_board_markup(g['board'], gid))
             del games[gid]
         else:
             g['turn'] = 'O' if g['turn'] == 'X' else 'X'
-            next_name = g['n1'] if g['turn'] == 'X' else g['n2']
-            await q.edit_message_text(
-                f"Match: {g['n1']} vs {g['n2']}\nTurn: {next_name} ({g['turn']})",
-                reply_markup=get_board_markup(g['board'], gid)
-            )
-    await q.answer()
+            next_p = g['n1'] if g['turn'] == 'X' else g['n2']
+            await q.edit_message_text(f"Turn: {next_p} ({g['turn']})", reply_markup=get_board_markup(g['board'], gid))
 
 # --- MAIN ---
 if __name__ == '__main__':
     Thread(target=run_flask).start()
-    application = ApplicationBuilder().token(TOKEN).build()
+    bot = ApplicationBuilder().token(TOKEN).build()
+    bot.add_handler(CommandHandler("start", start))
+    bot.add_handler(CommandHandler("game", game_cmd))
+    bot.add_handler(CommandHandler("leaderboard", lb_cmd))
+    bot.add_handler(CallbackQueryHandler(handle_callback))
+    bot.run_polling(drop_pending_updates=True)
     
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("game", game_cmd))
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    
-    # DROP PENDING UPDATES is must to avoid 409 Conflict
-    application.run_polling(drop_pending_updates=True)
-        
