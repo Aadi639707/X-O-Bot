@@ -30,7 +30,7 @@ if MONGO_URL:
 # --- SERVER FOR RENDER ---
 app = Flask('')
 @app.route('/')
-def home(): return "X/O Bot is Online & English Mode Active! 🚀"
+def home(): return "Bot is Online! 🚀"
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
@@ -47,7 +47,6 @@ def get_lb_text(mode="global"):
     elif mode == "week": 
         query = {"date": {"$gte": now - timedelta(days=7)}}
 
-    # Aggregation to get winner names and counts correctly
     pipeline = [
         {"$match": query}, 
         {"$group": {"_id": "$id", "name": {"$first": "$name"}, "count": {"$sum": 1}}}, 
@@ -83,10 +82,9 @@ def check_winner(b):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "🎮 *Welcome to X/O Arena!* 🎮\n\n"
-        "Play the ultimate Tic-Tac-Toe match here.\n\n"
         "🚀 /game - Start a Group Match\n"
         "🏆 /leaderboard - Check Top Players\n"
-        "ℹ️ /help - Game Instructions"
+        "📢 Updates: @Yonko_Crew"
     )
     btns = [
         [InlineKeyboardButton("🏆 Leaderboard", callback_data="lb_global")],
@@ -102,17 +100,13 @@ async def lb_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE:
-        await update.message.reply_text("❌ Please use this command in a group chat!")
+        await update.message.reply_text("❌ Please use this in a group!")
         return
     gid = str(update.effective_chat.id)
     games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None}
-    await update.message.reply_text(
-        f"🎮 *X-O Match Started!*\n❌ Player: {update.effective_user.first_name}\n\nWaiting for Player 2 to join...", 
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"j_{gid}")]])), 
-        parse_mode=constants.ParseMode.MARKDOWN
-    )
-
-# --- CALLBACKS ---
+    await update.message.reply_text(f"🎮 *X-O Match Started!*\n❌: {update.effective_user.first_name}\n\nWaiting for Player 2...", 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"j_{gid}")]]), 
+        parse_mode=constants.ParseMode.MARKDOWN)
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -142,13 +136,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         win = check_winner(g['board'])
         if win:
             winner_name = g['n1'] if win == 'X' else g['n2']
-            await q.edit_message_text(f"🏆 Match Winner: {winner_name}!", reply_markup=get_board_markup(g['board'], gid))
-            # LEADERBOARD FIX: Saving win data
+            await q.edit_message_text(f"🏆 Winner: {winner_name}!", reply_markup=get_board_markup(g['board'], gid))
             if stats_col is not None:
                 stats_col.insert_one({"id": uid, "name": winner_name, "date": datetime.now()})
             del games[gid]
         elif all(cell != " " for row in g['board'] for cell in row):
-            await q.edit_message_text("🤝 Match Draw!", reply_markup=get_board_markup(g['board'], gid))
+            await q.edit_message_text("🤝 Draw!", reply_markup=get_board_markup(g['board'], gid))
             del games[gid]
         else:
             g['turn'] = 'O' if g['turn'] == 'X' else 'X'
@@ -163,5 +156,5 @@ if __name__ == '__main__':
     bot.add_handler(CommandHandler("game", game_cmd))
     bot.add_handler(CommandHandler("leaderboard", lb_cmd))
     bot.add_handler(CallbackQueryHandler(handle_callback))
-    
     bot.run_polling(drop_pending_updates=True, poll_interval=0.1)
+    
