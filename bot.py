@@ -8,8 +8,8 @@ from pymongo import MongoClient
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Logging setup
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
@@ -23,14 +23,11 @@ if MONGO_URL:
         client = MongoClient(MONGO_URL)
         db = client['xo_premium_db']
         stats_col = db['wins']
-        logger.info("MongoDB Connected! ✅")
-    except Exception as e: 
-        logger.error(f"DB Error: {e}")
+    except: pass
 
-# --- SERVER FOR RENDER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Online! 🚀"
+def home(): return "Bot is Ultra Fast! 🚀"
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
@@ -38,30 +35,12 @@ def run_flask():
 # --- LOGIC ---
 games = {}
 
-def get_lb_text(mode="global"):
-    if stats_col is None: return "❌ Database connection issue!"
-    now = datetime.now()
-    query = {}
-    if mode == "today": 
-        query = {"date": {"$gte": now.replace(hour=0, minute=0, second=0, microsecond=0)}}
-    elif mode == "week": 
-        query = {"date": {"$gte": now - timedelta(days=7)}}
-
-    pipeline = [
-        {"$match": query}, 
-        {"$group": {"_id": "$id", "name": {"$first": "$name"}, "count": {"$sum": 1}}}, 
-        {"$sort": {"count": -1}}, 
-        {"$limit": 10}
-    ]
-    results = list(stats_col.aggregate(pipeline))
-    
-    if not results: return f"🏆 *{mode.upper()} LEADERBOARD*\n\nNo records yet! 🔥"
-    
-    text = f"🎊 *TOP PLAYERS - {mode.upper()}* 🎊\n\n"
-    emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-    for i, user in enumerate(results):
-        text += f"{emojis[i]} {user['name']} — `{user['count']} Wins`\n"
-    return text
+async def delete_message_after(context, chat_id, message_id, delay=120):
+    """Auto-delete message after 2 minutes"""
+    await asyncio.sleep(delay)
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except: pass
 
 def get_board_markup(board, gid):
     return InlineKeyboardMarkup([
@@ -80,44 +59,37 @@ def check_winner(b):
 # --- COMMANDS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🎮 *Welcome to X/O Arena!* 🎮\n\n"
-        "🚀 /game - Start a Group Match\n"
-        "🏆 /leaderboard - Check Top Players\n"
-        "📢 Updates: @Yonko_Crew"
-    )
-    btns = [
-        [InlineKeyboardButton("🏆 Leaderboard", callback_data="lb_global")],
-        [InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SANATANI_GOJO"),
-         InlineKeyboardButton("📢 Updates", url="https://t.me/Yonko_Crew")]
-    ]
+    text = "🎮 *X/O Arena Ready!* 🎮\n\n🚀 /game - Start\n🏆 /leaderboard - Stats\n❓ /help - Guide"
+    btns = [[InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SANATANI_GOJO"),
+             InlineKeyboardButton("📢 Updates", url="https://t.me/Yonko_Crew")]]
     await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(btns), parse_mode=constants.ParseMode.MARKDOWN)
 
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = "📖 *Help Guide*\n\n1. Add bot to group.\n2. Use /game to start.\n3. Wait for friend to join.\n4. First one to get 3 in a row wins!"
+    await update.effective_message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
+
 async def lb_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    btns = [[InlineKeyboardButton("Today", callback_data="lb_today"), 
-             InlineKeyboardButton("Global", callback_data="lb_global")]]
-    await update.effective_message.reply_text(get_lb_text("global"), reply_markup=InlineKeyboardMarkup(btns), parse_mode=constants.ParseMode.MARKDOWN)
+    from bot import get_lb_text # Ensure it's defined or just call direct
+    await update.effective_message.reply_text("🏆 Use Buttons in /start for Leaderboard.")
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE:
-        await update.message.reply_text("❌ Please use this in a group!")
+        await update.message.reply_text("❌ Use in Groups!")
         return
     gid = str(update.effective_chat.id)
     games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None}
-    await update.message.reply_text(f"🎮 *X-O Match Started!*\n❌: {update.effective_user.first_name}\n\nWaiting for Player 2...", 
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"j_{gid}")]])), 
-        parse_mode=constants.ParseMode.MARKDOWN)
+    await update.message.reply_text(f"🎮 *X-O Match Started!*\n❌: {update.effective_user.first_name}", 
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join", callback_data=f"j_{gid}")]]), 
+                                    parse_mode=constants.ParseMode.MARKDOWN)
+
+# --- CALLBACKS ---
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer() 
     uid, data = q.from_user.id, q.data
 
-    if data.startswith("lb_"):
-        mode = data.split("_")[1]
-        await q.edit_message_text(get_lb_text(mode), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="lb_global")]]), parse_mode=constants.ParseMode.MARKDOWN)
-
-    elif data.startswith("j_"):
+    if data.startswith("j_"):
         gid = data.split('_')[1]
         if gid in games and games[gid]['p1'] != uid:
             g = games[gid]
@@ -134,15 +106,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         g['board'][r][c] = g['turn']
         win = check_winner(g['board'])
+        
         if win:
-            winner_name = g['n1'] if win == 'X' else g['n2']
-            await q.edit_message_text(f"🏆 Winner: {winner_name}!", reply_markup=get_board_markup(g['board'], gid))
-            if stats_col is not None:
-                stats_col.insert_one({"id": uid, "name": winner_name, "date": datetime.now()})
+            name = g['n1'] if win == 'X' else g['n2']
+            msg = await q.edit_message_text(f"🏆 Winner: {name}!\n\n_This message will delete in 2 minutes._", reply_markup=get_board_markup(g['board'], gid), parse_mode=constants.ParseMode.MARKDOWN)
+            if stats_col: stats_col.insert_one({"id": uid, "name": name, "date": datetime.now()})
             del games[gid]
+            # Auto-Delete Task
+            asyncio.create_task(delete_message_after(context, q.message.chat_id, msg.message_id))
+            
         elif all(cell != " " for row in g['board'] for cell in row):
-            await q.edit_message_text("🤝 Draw!", reply_markup=get_board_markup(g['board'], gid))
+            msg = await q.edit_message_text("🤝 Draw Match!\n\n_Deleting in 2 minutes..._", reply_markup=get_board_markup(g['board'], gid), parse_mode=constants.ParseMode.MARKDOWN)
             del games[gid]
+            asyncio.create_task(delete_message_after(context, q.message.chat_id, msg.message_id))
         else:
             g['turn'] = 'O' if g['turn'] == 'X' else 'X'
             next_p = g['n1'] if g['turn'] == 'X' else g['n2']
@@ -154,7 +130,7 @@ if __name__ == '__main__':
     bot = ApplicationBuilder().token(TOKEN).build()
     bot.add_handler(CommandHandler("start", start))
     bot.add_handler(CommandHandler("game", game_cmd))
-    bot.add_handler(CommandHandler("leaderboard", lb_cmd))
+    bot.add_handler(CommandHandler("help", help_cmd))
     bot.add_handler(CallbackQueryHandler(handle_callback))
     bot.run_polling(drop_pending_updates=True, poll_interval=0.1)
-    
+        
