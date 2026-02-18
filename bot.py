@@ -142,4 +142,4 @@ if __name__ == '__main__':
     bot.add_handler(CommandHandler("rps", rps_cmd))
     bot.add_handler(CallbackQueryHandler(handle_callback))
     bot.run_polling(drop_pending_updates=True)
-    
+                                                       
