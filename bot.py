@@ -1,6 +1,8 @@
 import os
 import logging
 import asyncio
+import requests
+import time
 from datetime import datetime
 from flask import Flask
 from threading import Thread
@@ -15,7 +17,8 @@ logger = logging.getLogger(__name__)
 # --- CONFIG ---
 TOKEN = os.environ.get("TOKEN")
 MONGO_URL = os.environ.get("MONGO_URL")
-ADMIN_ID = 8306853454  # Updated Admin ID ✅
+ADMIN_ID = 8306853454  
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 # --- DATABASE ---
 stats_col = None
@@ -26,11 +29,22 @@ if MONGO_URL:
         db = client['xo_premium_db']
         stats_col = db['wins']
         users_col = db['users']
-    except: pass
+        logger.info("MongoDB Connected! ✅")
+    except: logger.error("DB Connection Failed")
 
+# --- SERVER & PINGER (ANTI-SLEEP) ---
 app = Flask('')
 @app.route('/')
-def home(): return "Admin Updated & Bot Live! ⚡"
+def home(): return "Bot is Online & Active 24/7! ⚡"
+
+def pinger():
+    if not RENDER_URL: return
+    while True:
+        try:
+            requests.get(RENDER_URL)
+            logger.info("Ping success! Stay awake active.")
+        except: pass
+        time.sleep(300)
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
@@ -40,11 +54,11 @@ games = {}
 rps_games = {}
 
 # --- UTILS ---
-def get_leaderboard_text():
-    if stats_col is None: return "❌ Database not connected!"
+def get_lb_text():
+    if stats_col is None: return "❌ DB Error!"
     pipeline = [{"$group": {"_id": "$id", "name": {"$first": "$name"}, "wins": {"$sum": 1}}}, {"$sort": {"wins": -1}}, {"$limit": 10}]
     results = list(stats_col.aggregate(pipeline))
-    if not results: return "🏆 *LEADERBOARD*\n\nNo wins yet! 🔥"
+    if not results: return "🏆 *LEADERBOARD*\n\nNo records yet! 🔥"
     text = "🏆 *TOP 10 CHAMPIONS* 🏆\n\n"
     emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     for i, user in enumerate(results):
@@ -68,33 +82,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users_col.update_one({"id": update.effective_user.id}, {"$set": {"name": update.effective_user.first_name}}, upsert=True)
     await update.message.reply_text("🎮 *Gaming Arena*\n\n/game - X-O Match\n/rps - RPS Match\n/leaderboard - Rankings", parse_mode=constants.ParseMode.MARKDOWN)
 
-async def lb_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(get_leaderboard_text(), parse_mode=constants.ParseMode.MARKDOWN)
-
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == constants.ChatType.PRIVATE: return
     gid = f"{update.message.message_id}"
     games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None, 'n2': None}
-    await update.message.reply_text(f"🎮 *X-O Match*", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"j_{gid}")]]))
+    await update.message.reply_text(f"🎮 *X-O Match Started!*", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"j_{gid}")]]))
 
 async def rps_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == constants.ChatType.PRIVATE: return
     rid = f"{update.message.message_id}"
     rps_games[rid] = {'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None, 'n2': None, 'm1': None, 'm2': None}
-    await update.message.reply_text(f"🥊 *RPS Match*", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"rj_{rid}")]]))
+    await update.message.reply_text(f"🥊 *RPS Challenge*", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join RPS", callback_data=f"rj_{rid}")]]))
+
+async def lb_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(get_lb_text(), parse_mode=constants.ParseMode.MARKDOWN)
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ Permission Denied.")
-    msg_text = " ".join(context.args)
-    if not msg_text or users_col is None: return
+    if update.effective_user.id != ADMIN_ID: return
+    txt = " ".join(context.args)
+    if not txt or not users_col: return
     users = list(users_col.find({}, {"id": 1}))
-    sent, failed = 0, 0
+    sent = 0
     for u in users:
         try:
-            await context.bot.send_message(u['id'], msg_text)
+            await context.bot.send_message(u['id'], txt)
             sent += 1
             await asyncio.sleep(0.05)
-        except: failed += 1
-    await update.message.reply_text(f"✅ *Broadcast Done*\nSent: {sent}\nFailed: {failed}")
+        except: pass
+    await update.message.reply_text(f"✅ Broadcast Done! Sent: {sent}")
 
 # --- CALLBACK HANDLER ---
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,7 +138,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if stats_col: stats_col.insert_one({"id": uid, "name": q.from_user.first_name, "date": datetime.now()})
             del games[gid]
         elif all(cell != " " for row in g['board'] for cell in row):
-            await q.edit_message_text("🤝 Draw!", reply_markup=get_xo_markup(g['board'], gid))
+            await q.edit_message_text("🤝 Draw Match!", reply_markup=get_xo_markup(g['board'], gid))
             del games[gid]
         else:
             g['turn'] = 'O' if g['turn'] == 'X' else 'X'
@@ -136,7 +151,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             g = rps_games[rid]
             g['p2'], g['n2'] = uid, q.from_user.first_name
             btns = [[InlineKeyboardButton("🪨 Rock", callback_data=f"rm_{rid}_R"), InlineKeyboardButton("📄 Paper", callback_data=f"rm_{rid}_P"), InlineKeyboardButton("✂️ Scissors", callback_data=f"rm_{rid}_S")]]
-            await q.edit_message_text(f"🥊 {g['n1']} vs {g['n2']}\nChose move!", reply_markup=InlineKeyboardMarkup(btns))
+            await q.edit_message_text(f"🥊 {g['n1']} vs {g['n2']}\nChose your move!", reply_markup=InlineKeyboardMarkup(btns))
 
     elif data.startswith("rm_"):
         rid, m = parts[1], parts[2]
@@ -152,15 +167,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 res, win_uid, win_n = f"🏆 Winner: {g['n1']}!", g['p1'], g['n1']
             elif m1 != m2:
                 res, win_uid, win_n = f"🏆 Winner: {g['n2']}!", g['p2'], g['n2']
-            await q.edit_message_text(f"Result: {res}")
+            await q.edit_message_text(f"🥊 Result: {res}")
             if win_uid and stats_col: stats_col.insert_one({"id": win_uid, "name": win_n, "date": datetime.now()})
             del rps_games[rid]
         else:
-            await q.edit_message_text(f"🥊 Waiting moves...", reply_markup=q.message.reply_markup)
+            await q.edit_message_text(f"🥊 Waiting for opponent...", reply_markup=q.message.reply_markup)
 
 # --- MAIN ---
 if __name__ == '__main__':
     Thread(target=run_flask).start()
+    if RENDER_URL: Thread(target=pinger, daemon=True).start()
     bot = ApplicationBuilder().token(TOKEN).build()
     bot.add_handler(CommandHandler("start", start))
     bot.add_handler(CommandHandler("game", game_cmd))
