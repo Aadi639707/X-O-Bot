@@ -9,7 +9,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constan
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # Logging setup
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
@@ -27,7 +27,7 @@ if MONGO_URL:
 
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Ultra Stable! ⚡"
+def home(): return "Bot is Alive & Fixed! ⚡"
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
@@ -38,7 +38,8 @@ rps_games = {}
 
 # --- UTILS ---
 def get_xo_markup(board, gid):
-    return InlineKeyboardMarkup([[InlineKeyboardButton(board[r][c] if board[r][c] != " " else "·", callback_data=f"m_{gid}_{r}_{c}") for c in range(3)] for r in range(3)])
+    # Short callback data: m_{gid}_{r}{c}
+    return InlineKeyboardMarkup([[InlineKeyboardButton(board[r][c] if board[r][c] != " " else "·", callback_data=f"m_{gid}_{r}{c}") for c in range(3)] for r in range(3)])
 
 def check_xo_win(b):
     for i in range(3):
@@ -50,84 +51,88 @@ def check_xo_win(b):
 
 # --- COMMANDS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🎮 *Arena Ready!*\n\n/game - X-O\n/rps - Rock Paper Scissors", parse_mode=constants.ParseMode.MARKDOWN)
+    await update.message.reply_text("🎮 *Gaming Arena Active!*\n\n/game - Tic Tac Toe\n/rps - Rock Paper Scissors", parse_mode=constants.ParseMode.MARKDOWN)
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE: return
-    gid = f"x_{update.effective_chat.id}_{update.message.message_id}"
-    games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None}
+    # Unique ID within short limit
+    gid = str(update.message.message_id % 10000)
+    games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None, 'n2': None}
     await update.message.reply_text(f"🎮 *X-O Match*\nHost: {update.effective_user.first_name}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"j_{gid}")]]))
 
 async def rps_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE: return
-    rid = f"r_{update.effective_chat.id}_{update.message.message_id}"
+    rid = str(update.message.message_id % 10000)
     rps_games[rid] = {'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None, 'n2': None, 'm1': None, 'm2': None}
     await update.message.reply_text(f"🥊 *RPS Match*\nHost: {update.effective_user.first_name}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", callback_data=f"rj_{rid}")]]))
 
-# --- CALLBACK LOGIC ---
+# --- CALLBACK HANDLER ---
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
     data = q.data
 
-    # 1. IMMEDIATE ANSWER (Loading Hatane ke liye)
-    try:
-        await q.answer()
-    except: pass
+    await q.answer() # Immediately stop loading circle
 
-    # 2. X-O HANDLERS
+    # 1. X-O JOIN
     if data.startswith("j_"):
-        gid = data.split('_', 1)[1]
+        gid = data.split('_')[1]
         if gid in games and games[gid]['p1'] != uid and games[gid]['p2'] is None:
             g = games[gid]
             g['p2'], g['n2'] = uid, q.from_user.first_name
             await q.edit_message_text(f"⚔️ {g['n1']} vs {g['n2']}\nTurn: {g['n1']} (X)", reply_markup=get_xo_markup(g['board'], gid))
 
+    # 2. X-O MOVE
     elif data.startswith("m_"):
-        _, gid, r, c = data.split('_')
+        parts = data.split('_')
+        gid = parts[1]
+        pos = parts[2]
+        r, c = int(pos[0]), int(pos[1])
+        
         if gid not in games: return
         g = games[gid]
         curr = g['p1'] if g['turn'] == 'X' else g['p2']
-        if uid != curr: return
+        if uid != curr or g['board'][r][c] != " ": return
         
-        r, c = int(r), int(c)
-        if g['board'][r][c] == " ":
-            g['board'][r][c] = g['turn']
-            win = check_xo_win(g['board'])
-            if win:
-                await q.edit_message_text(f"🏆 Winner: {q.from_user.first_name}!", reply_markup=get_xo_markup(g['board'], gid))
-                del games[gid]
-            elif all(cell != " " for row in g['board'] for cell in row):
-                await q.edit_message_text("🤝 Draw!", reply_markup=get_xo_markup(g['board'], gid))
-                del games[gid]
-            else:
-                g['turn'] = 'O' if g['turn'] == 'X' else 'X'
-                next_n = g['n1'] if g['turn'] == 'X' else g['n2']
-                await q.edit_message_text(f"⚔️ Match Active\nTurn: {next_n} ({g['turn']})", reply_markup=get_xo_markup(g['board'], gid))
+        g['board'][r][c] = g['turn']
+        win = check_xo_win(g['board'])
+        if win:
+            await q.edit_message_text(f"🏆 Winner: {q.from_user.first_name}!", reply_markup=get_xo_markup(g['board'], gid))
+            del games[gid]
+        elif all(cell != " " for row in g['board'] for cell in row):
+            await q.edit_message_text("🤝 Draw!", reply_markup=get_xo_markup(g['board'], gid))
+            del games[gid]
+        else:
+            g['turn'] = 'O' if g['turn'] == 'X' else 'X'
+            nxt_n = g['n1'] if g['turn'] == 'X' else g['n2']
+            await q.edit_message_text(f"⚔️ Match Active\nTurn: {nxt_n} ({g['turn']})", reply_markup=get_xo_markup(g['board'], gid))
 
-    # 3. RPS HANDLERS
+    # 3. RPS JOIN
     elif data.startswith("rj_"):
-        rid = data.split('_', 1)[1]
+        rid = data.split('_')[1]
         if rid in rps_games and rps_games[rid]['p1'] != uid and rps_games[rid]['p2'] is None:
             g = rps_games[rid]
             g['p2'], g['n2'] = uid, q.from_user.first_name
             btns = [[InlineKeyboardButton("🪨 Rock", callback_data=f"rm_{rid}_R"), InlineKeyboardButton("📄 Paper", callback_data=f"rm_{rid}_P"), InlineKeyboardButton("✂️ Scissors", callback_data=f"rm_{rid}_S")]]
-            await q.edit_message_text(f"🥊 Match Live!\n{g['n1']} vs {g['n2']}", reply_markup=InlineKeyboardMarkup(btns))
+            await q.edit_message_text(f"🥊 {g['n1']} vs {g['n2']}\nChoose your move!", reply_markup=InlineKeyboardMarkup(btns))
 
+    # 4. RPS MOVE
     elif data.startswith("rm_"):
         _, rid, m = data.split('_')
         if rid not in rps_games: return
         g = rps_games[rid]
+        
         if uid == g['p1'] and not g['m1']: g['m1'] = m
         elif uid == g['p2'] and not g['m2']: g['m2'] = m
         else: return
 
         if g['m1'] and g['m2']:
             names = {"R": "🪨", "P": "📄", "S": "✂️"}
-            res = "🤝 Draw!"
-            if (g['m1']=='R' and g['m2']=='S') or (g['m1']=='S' and g['m2']=='P') or (g['m1']=='P' and g['m2']=='R'): res = f"🏆 Winner: {g['n1']}!"
-            elif g['m1'] != g['m2']: res = f"🏆 Winner: {g['n2']}!"
-            await q.edit_message_text(f"🥊 Result:\n{g['n1']}: {names[g['m1']]}\n{g['n2']}: {names[g['m2']]}\n\n{res}")
+            m1, m2 = g['m1'], g['m2']
+            if m1 == m2: res = "🤝 Draw!"
+            elif (m1=='R' and m2=='S') or (m1=='S' and m2=='P') or (m1=='P' and m2=='R'): res = f"🏆 Winner: {g['n1']}!"
+            else: res = f"🏆 Winner: {g['n2']}!"
+            await q.edit_message_text(f"🥊 Result:\n{g['n1']}: {names[m1]}\n{g['n2']}: {names[m2]}\n\n{res}")
             del rps_games[rid]
         else:
             s1, s2 = ("✅" if g['m1'] else "⏳"), ("✅" if g['m2'] else "⏳")
@@ -142,4 +147,4 @@ if __name__ == '__main__':
     bot.add_handler(CommandHandler("rps", rps_cmd))
     bot.add_handler(CallbackQueryHandler(handle_callback))
     bot.run_polling(drop_pending_updates=True)
-                                                       
+        
