@@ -1,7 +1,6 @@
 import os
 import logging
 import asyncio
-import requests
 import time
 from datetime import datetime
 from flask import Flask
@@ -9,6 +8,12 @@ from threading import Thread
 from pymongo import MongoClient
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+
+# 'requests' ko safely import karo
+try:
+    import requests
+except ImportError:
+    requests = None
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -30,19 +35,22 @@ if MONGO_URL:
         stats_col = db['wins']
         users_col = db['users']
         logger.info("MongoDB Connected! ✅")
-    except: logger.error("DB Connection Failed")
+    except Exception as e:
+        logger.error(f"DB Error: {e}")
 
-# --- SERVER & PINGER (ANTI-SLEEP) ---
+# --- SERVER & PINGER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Online & Active 24/7! ⚡"
+def home(): return "Bot is Online & Active! ⚡"
 
 def pinger():
-    if not RENDER_URL: return
+    if not RENDER_URL or requests is None:
+        logger.warning("Pinger disabled (URL or requests module missing)")
+        return
     while True:
         try:
             requests.get(RENDER_URL)
-            logger.info("Ping success! Stay awake active.")
+            logger.info("Ping success!")
         except: pass
         time.sleep(300)
 
@@ -109,7 +117,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent += 1
             await asyncio.sleep(0.05)
         except: pass
-    await update.message.reply_text(f"✅ Broadcast Done! Sent: {sent}")
+    await update.message.reply_text(f"✅ Sent to {sent} users.")
 
 # --- CALLBACK HANDLER ---
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -151,7 +159,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             g = rps_games[rid]
             g['p2'], g['n2'] = uid, q.from_user.first_name
             btns = [[InlineKeyboardButton("🪨 Rock", callback_data=f"rm_{rid}_R"), InlineKeyboardButton("📄 Paper", callback_data=f"rm_{rid}_P"), InlineKeyboardButton("✂️ Scissors", callback_data=f"rm_{rid}_S")]]
-            await q.edit_message_text(f"🥊 {g['n1']} vs {g['n2']}\nChose your move!", reply_markup=InlineKeyboardMarkup(btns))
+            await q.edit_message_text(f"🥊 {g['n1']} vs {g['n2']}\nChose move!", reply_markup=InlineKeyboardMarkup(btns))
 
     elif data.startswith("rm_"):
         rid, m = parts[1], parts[2]
@@ -161,13 +169,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif uid == g['p2'] and not g['m2']: g['m2'] = m
         else: return
         if g['m1'] and g['m2']:
+            names = {"R": "🪨 Rock", "P": "📄 Paper", "S": "✂️ Scissors"}
             m1, m2 = g['m1'], g['m2']
             res, win_uid, win_n = "🤝 Draw!", None, None
             if (m1=='R' and m2=='S') or (m1=='S' and m2=='P') or (m1=='P' and m2=='R'):
                 res, win_uid, win_n = f"🏆 Winner: {g['n1']}!", g['p1'], g['n1']
             elif m1 != m2:
                 res, win_uid, win_n = f"🏆 Winner: {g['n2']}!", g['p2'], g['n2']
-            await q.edit_message_text(f"🥊 Result: {res}")
+            await q.edit_message_text(f"🥊 Result: {res}\n{g['n1']}: {names[m1]} | {g['n2']}: {names[m2]}")
             if win_uid and stats_col: stats_col.insert_one({"id": win_uid, "name": win_n, "date": datetime.now()})
             del rps_games[rid]
         else:
@@ -185,4 +194,4 @@ if __name__ == '__main__':
     bot.add_handler(CommandHandler("broadcast", broadcast))
     bot.add_handler(CallbackQueryHandler(handle_callback))
     bot.run_polling(drop_pending_updates=True)
-    
+        
