@@ -9,7 +9,7 @@ from pymongo import MongoClient
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# 'requests' ko safely import karo
+# requests ko safely import karo
 try:
     import requests
 except ImportError:
@@ -38,21 +38,20 @@ if MONGO_URL:
     except Exception as e:
         logger.error(f"DB Error: {e}")
 
-# --- SERVER & PINGER ---
+# --- SERVER & ANTI-SLEEP PINGER ---
 app = Flask('')
 @app.route('/')
 def home(): return "Bot is Online & Active! ⚡"
 
 def pinger():
     if not RENDER_URL or requests is None:
-        logger.warning("Pinger disabled (URL or requests module missing)")
         return
     while True:
         try:
             requests.get(RENDER_URL)
-            logger.info("Ping success!")
+            logger.info("Keep-alive ping sent!")
         except: pass
-        time.sleep(300)
+        time.sleep(300) # 5 minutes
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
@@ -63,7 +62,7 @@ rps_games = {}
 
 # --- UTILS ---
 def get_lb_text():
-    if stats_col is None: return "❌ DB Error!"
+    if stats_col is None: return "❌ Database error!"
     pipeline = [{"$group": {"_id": "$id", "name": {"$first": "$name"}, "wins": {"$sum": 1}}}, {"$sort": {"wins": -1}}, {"$limit": 10}]
     results = list(stats_col.aggregate(pipeline))
     if not results: return "🏆 *LEADERBOARD*\n\nNo records yet! 🔥"
@@ -88,7 +87,7 @@ def check_xo_win(b):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if users_col is not None:
         users_col.update_one({"id": update.effective_user.id}, {"$set": {"name": update.effective_user.first_name}}, upsert=True)
-    await update.message.reply_text("🎮 *Gaming Arena*\n\n/game - X-O Match\n/rps - RPS Match\n/leaderboard - Rankings", parse_mode=constants.ParseMode.MARKDOWN)
+    await update.message.reply_text("🎮 *Gaming Arena*\n\n/game - Tic Tac Toe\n/rps - Rock Paper Scissors\n/leaderboard - Rankings", parse_mode=constants.ParseMode.MARKDOWN)
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE: return
@@ -194,4 +193,4 @@ if __name__ == '__main__':
     bot.add_handler(CommandHandler("broadcast", broadcast))
     bot.add_handler(CallbackQueryHandler(handle_callback))
     bot.run_polling(drop_pending_updates=True)
-        
+    
