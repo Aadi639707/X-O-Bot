@@ -9,7 +9,7 @@ from pymongo import MongoClient
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants, WebAppInfo
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Safely import requests for pinger
+# Safely import requests for anti-sleep pinger
 try:
     import requests
 except ImportError:
@@ -41,7 +41,7 @@ if MONGO_URL:
 # --- SERVER & ANTI-SLEEP PINGER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Online & Chess TMA Ready! ♟️"
+def home(): return "Bot is Online & Multi-Game Leaderboard Active! ⚡"
 
 def pinger():
     if not RENDER_URL or requests is None:
@@ -60,13 +60,29 @@ def run_flask():
 games = {} 
 rps_games = {}
 
-# --- UTILS ---
-def get_lb_text():
-    if stats_col is None: return "❌ Database error!"
-    pipeline = [{"$group": {"_id": "$id", "name": {"$first": "$name"}, "wins": {"$sum": 1}}}, {"$sort": {"wins": -1}}, {"$limit": 10}]
+# --- LEADERBOARD UTILS ---
+def get_leaderboard_text(game_type="total"):
+    if stats_col is None: return "❌ Database not connected!"
+    
+    match_filter = {}
+    if game_type != "total":
+        match_filter = {"game": game_type}
+        
+    pipeline = [
+        {"$match": match_filter},
+        {"$group": {"_id": "$id", "name": {"$first": "$name"}, "wins": {"$sum": 1}}},
+        {"$sort": {"wins": -1}},
+        {"$limit": 10}
+    ]
     results = list(stats_col.aggregate(pipeline))
-    if not results: return "🏆 *LEADERBOARD*\n\nNo records yet! 🔥"
-    text = "🏆 *TOP 10 CHAMPIONS* 🏆\n\n"
+    
+    label = game_type.upper() if game_type != "total" else "OVERALL"
+    title = f"🏆 *TOP 10 CHAMPIONS ({label})*"
+    
+    if not results: 
+        return f"{title}\n\nNo records found yet! Start playing to top the charts. 🔥"
+    
+    text = f"{title}\n\n"
     emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     for i, user in enumerate(results):
         text += f"{emojis[i]} {user['name']} — `{user['wins']} Wins`\n"
@@ -87,14 +103,23 @@ def check_xo_win(b):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if users_col is not None:
         users_col.update_one({"id": update.effective_user.id}, {"$set": {"name": update.effective_user.first_name}}, upsert=True)
-    await update.message.reply_text("🎮 *Gaming Arena*\n\n/game - Tic Tac Toe\n/rps - Rock Paper Scissors\n/chess - Play Chess (TMA)\n/leaderboard - Rankings", parse_mode=constants.ParseMode.MARKDOWN)
+    await update.message.reply_text("🎮 *Gaming Arena*\n\n/game - Tic Tac Toe\n/rps - Rock Paper Scissors\n/chess - Play Chess (TMA)\n/leaderboard - View Rankings", parse_mode=constants.ParseMode.MARKDOWN)
+
+async def lb_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("Tic-Tac-Toe", callback_data="lb_xo"), InlineKeyboardButton("RPS", callback_data="lb_rps")],
+        [InlineKeyboardButton("Chess", callback_data="lb_chess"), InlineKeyboardButton("Overall", callback_data="lb_total")]
+    ]
+    await update.message.reply_text("Select the game leaderboard you want to view:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def chess_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Aapka Vercel link yahan set hai
-    url = "https://Chess-bice-beta.vercel.app" 
-    keyboard = [[InlineKeyboardButton("♟️ Open Chess Board", web_app=WebAppInfo(url=url))]]
+    chat_id = update.effective_chat.id
+    game_id = f"chess_{abs(chat_id)}" 
+    url = f"https://Chess-bice-beta.vercel.app?gameId={game_id}"
+    
+    keyboard = [[InlineKeyboardButton("♟️ Join Chess Match", web_app=WebAppInfo(url=url))]]
     await update.message.reply_text(
-        "🏁 *Chess Arena Ready!*\n\nNiche button par click karke board kholiye.",
+        "🏁 *Grandmaster Arena Ready!*\n\nClick below to join. Board unlocks when 2 players enter.",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=constants.ParseMode.MARKDOWN
     )
@@ -110,9 +135,6 @@ async def rps_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rid = f"{update.message.message_id}"
     rps_games[rid] = {'p1': update.effective_user.id, 'n1': update.effective_user.first_name, 'p2': None, 'n2': None, 'm1': None, 'm2': None}
     await update.message.reply_text(f"🥊 *RPS Challenge*", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join RPS", callback_data=f"rj_{rid}")]]))
-
-async def lb_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(get_lb_text(), parse_mode=constants.ParseMode.MARKDOWN)
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -135,7 +157,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid, data = q.from_user.id, q.data
     parts = data.split('_')
 
-    if data.startswith("j_"):
+    # LEADERBOARD MENU
+    if data.startswith("lb_"):
+        game_type = parts[1]
+        await q.edit_message_text(get_leaderboard_text(game_type), parse_mode=constants.ParseMode.MARKDOWN, reply_markup=q.message.reply_markup)
+
+    # XO LOGIC
+    elif data.startswith("j_"):
         gid = parts[1]
         if gid in games and games[gid]['p1'] != uid and games[gid]['p2'] is None:
             g = games[gid]
@@ -152,7 +180,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         win = check_xo_win(g['board'])
         if win:
             await q.edit_message_text(f"🏆 Winner: {q.from_user.first_name}!", reply_markup=get_xo_markup(g['board'], gid))
-            if stats_col: stats_col.insert_one({"id": uid, "name": q.from_user.first_name, "date": datetime.now()})
+            if stats_col: stats_col.insert_one({"id": uid, "name": q.from_user.first_name, "game": "xo", "date": datetime.now()})
             del games[gid]
         elif all(cell != " " for row in g['board'] for cell in row):
             await q.edit_message_text("🤝 Draw Match!", reply_markup=get_xo_markup(g['board'], gid))
@@ -162,13 +190,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             nxt = g['n1'] if g['turn'] == 'X' else g['n2']
             await q.edit_message_text(f"⚔️ Turn: {nxt} ({g['turn']})", reply_markup=get_xo_markup(g['board'], gid))
 
+    # RPS LOGIC
     elif data.startswith("rj_"):
         rid = parts[1]
         if rid in rps_games and rps_games[rid]['p1'] != uid and rps_games[rid]['p2'] is None:
             g = rps_games[rid]
             g['p2'], g['n2'] = uid, q.from_user.first_name
             btns = [[InlineKeyboardButton("🪨 Rock", callback_data=f"rm_{rid}_R"), InlineKeyboardButton("📄 Paper", callback_data=f"rm_{rid}_P"), InlineKeyboardButton("✂️ Scissors", callback_data=f"rm_{rid}_S")]]
-            await q.edit_message_text(f"🥊 {g['n1']} vs {g['n2']}\nChose move!", reply_markup=InlineKeyboardMarkup(btns))
+            await q.edit_message_text(f"🥊 {g['n1']} vs {g['n2']}\nChoose your move!", reply_markup=InlineKeyboardMarkup(btns))
 
     elif data.startswith("rm_"):
         rid, m = parts[1], parts[2]
@@ -186,7 +215,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif m1 != m2:
                 res, win_uid, win_n = f"🏆 Winner: {g['n2']}!", g['p2'], g['n2']
             await q.edit_message_text(f"🥊 Result: {res}\n{g['n1']}: {names[m1]} | {g['n2']}: {names[m2]}")
-            if win_uid and stats_col: stats_col.insert_one({"id": win_uid, "name": win_n, "date": datetime.now()})
+            if win_uid and stats_col: stats_col.insert_one({"id": win_uid, "name": win_n, "game": "rps", "date": datetime.now()})
             del rps_games[rid]
         else:
             await q.edit_message_text(f"🥊 Waiting for opponent...", reply_markup=q.message.reply_markup)
@@ -204,4 +233,4 @@ if __name__ == '__main__':
     bot.add_handler(CommandHandler("broadcast", broadcast))
     bot.add_handler(CallbackQueryHandler(handle_callback))
     bot.run_polling(drop_pending_updates=True)
-    
+                  
