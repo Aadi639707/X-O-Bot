@@ -6,10 +6,10 @@ from datetime import datetime
 from flask import Flask
 from threading import Thread
 from pymongo import MongoClient
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants, WebAppInfo
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# requests ko safely import karo
+# Safely import requests for pinger
 try:
     import requests
 except ImportError:
@@ -41,7 +41,7 @@ if MONGO_URL:
 # --- SERVER & ANTI-SLEEP PINGER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Online & Active! ⚡"
+def home(): return "Bot is Online & Chess TMA Ready! ♟️"
 
 def pinger():
     if not RENDER_URL or requests is None:
@@ -51,7 +51,7 @@ def pinger():
             requests.get(RENDER_URL)
             logger.info("Keep-alive ping sent!")
         except: pass
-        time.sleep(300) # 5 minutes
+        time.sleep(300)
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
@@ -87,7 +87,17 @@ def check_xo_win(b):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if users_col is not None:
         users_col.update_one({"id": update.effective_user.id}, {"$set": {"name": update.effective_user.first_name}}, upsert=True)
-    await update.message.reply_text("🎮 *Gaming Arena*\n\n/game - Tic Tac Toe\n/rps - Rock Paper Scissors\n/leaderboard - Rankings", parse_mode=constants.ParseMode.MARKDOWN)
+    await update.message.reply_text("🎮 *Gaming Arena*\n\n/game - Tic Tac Toe\n/rps - Rock Paper Scissors\n/chess - Play Chess (TMA)\n/leaderboard - Rankings", parse_mode=constants.ParseMode.MARKDOWN)
+
+async def chess_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Aapka Vercel link yahan set hai
+    url = "https://Chess-bice-beta.vercel.app" 
+    keyboard = [[InlineKeyboardButton("♟️ Open Chess Board", web_app=WebAppInfo(url=url))]]
+    await update.message.reply_text(
+        "🏁 *Chess Arena Ready!*\n\nNiche button par click karke board kholiye.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
 
 async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == constants.ChatType.PRIVATE: return
@@ -116,7 +126,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent += 1
             await asyncio.sleep(0.05)
         except: pass
-    await update.message.reply_text(f"✅ Sent to {sent} users.")
+    await update.message.reply_text(f"✅ Broadcast Done! Sent to {sent} users.")
 
 # --- CALLBACK HANDLER ---
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -187,6 +197,7 @@ if __name__ == '__main__':
     if RENDER_URL: Thread(target=pinger, daemon=True).start()
     bot = ApplicationBuilder().token(TOKEN).build()
     bot.add_handler(CommandHandler("start", start))
+    bot.add_handler(CommandHandler("chess", chess_cmd))
     bot.add_handler(CommandHandler("game", game_cmd))
     bot.add_handler(CommandHandler("rps", rps_cmd))
     bot.add_handler(CommandHandler("leaderboard", lb_cmd))
