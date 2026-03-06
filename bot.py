@@ -12,6 +12,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 # --- CONFIG ---
 TOKEN = os.environ.get("TOKEN")
 MONGO_URL = os.environ.get("MONGO_URL")
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 # --- DATABASE ---
 stats_col = None
@@ -22,100 +23,101 @@ if MONGO_URL:
         stats_col = db['wins']
     except: pass
 
-# --- WORDS ---
+# --- WORDS DB ---
 WORDS_DB = ["WHATSAPP", "TELEGRAM", "SAMSUNG", "IPHONE", "VALORANT", "MINECRAFT", "CHICKEN", "BIRYANI", "BURGER", "DOMINOS", "NETFLIX", "YOUTUBE", "AVENGERS", "BATMAN", "IRONMAN", "PIZZA", "CRICKET", "FOOTBALL"]
 
+# --- STATE ---
 active_hunts = {}
+games = {}
+rps_games = {}
 
-# --- HELPER: Generate Pattern ---
-def generate_pattern(word, reveal_indices):
-    return " ".join([word[i] if i in reveal_indices else "_" for i in range(len(word))])
+# --- HELPER: Auto Delete ---
+async def auto_delete(message, delay=120):
+    await asyncio.sleep(delay)
+    try: await message.delete()
+    except: pass
 
-# --- COMMANDS ---
-async def hunt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    word = random.choice(WORDS_DB).upper()
-    
-    # Randomly reveal 2 letters at start
-    reveal_indices = random.sample(range(len(word)), 2)
-    
-    active_hunts[chat_id] = {
-        "word": word,
-        "indices": reveal_indices,
-        "hints_used": 0 # Limit starts here
-    }
-    
-    pattern = generate_pattern(word, reveal_indices)
-    kb = [[InlineKeyboardButton("💡 Get Hint (Max 3)", callback_data=f"hint_{chat_id}")]]
-    
-    await update.message.reply_text(
-        f"🕵️‍♂️ *WORD HUNT STARTED!*\n\nGuess: `{pattern}`\n\n_Type the full word in chat!_",
-        parse_mode=constants.ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+# --- HELPER: Word Hunt Pattern ---
+def generate_pattern(word, indices):
+    return " ".join([word[i] if i in indices else "_" for i in range(len(word))])
 
-# --- HINT CALLBACK (WITH LIMIT) ---
-async def handle_hint(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    chat_id = int(q.data.split('_')[1])
-    
-    if chat_id not in active_hunts:
-        await q.answer("No active game!")
-        return
+# --- LEADERBOARD ---
+def get_leaderboard_text(game_type="total"):
+    if stats_col is None: return "❌ DB Error!"
+    match_query = {} if game_type == "total" else {"game": game_type}
+    pipeline = [{"$match": match_query}, {"$group": {"_id": "$id", "name": {"$first": "$name"}, "wins": {"$sum": 1}}}, {"$sort": {"wins": -1}}, {"$limit": 10}]
+    results = list(stats_col.aggregate(pipeline))
+    label = game_type.upper() if game_type != "total" else "OVERALL"
+    text = f"🏆 *TOP 10 CHAMPIONS ({label})*\n\n"
+    if not results: return text + "No wins yet!"
+    for i, user in enumerate(results):
+        link = f"[{user['name']}](tg://user?id={user['_id']})"
+        text += f"{i+1}. {link} — `{user['wins']} Wins`\n"
+    return text
 
-    game = active_hunts[chat_id]
-    
-    # 🛑 HINT LIMIT: Max 3 hints
-    if game['hints_used'] >= 3:
-        await q.answer("❌ Limit reached! No more hints.", show_alert=True)
-        return
-
-    # Reveal one more unique index
-    remaining = [i for i in range(len(game['word'])) if i not in game['indices']]
-    if not remaining:
-        await q.answer("All letters revealed!")
-        return
-        
-    new_idx = random.choice(remaining)
-    game['indices'].append(new_idx)
-    game['hints_used'] += 1
-    
-    new_pattern = generate_pattern(game['word'], game['indices'])
-    
-    await q.edit_message_text(
-        f"🕵️‍♂️ *WORD HUNT (Hint {game['hints_used']}/3)*\n\nGuess: `{new_pattern}`",
-        parse_mode=constants.ParseMode.MARKDOWN,
-        reply_markup=q.message.reply_markup
-    )
-    await q.answer(f"Hint added! {3 - game['hints_used']} left.")
-
-# --- MESSAGE CHECKER (THE FIX) ---
+# --- WORD HUNT LOGIC (THE FIX) ---
 async def check_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text: return
     chat_id = update.effective_chat.id
-    if chat_id not in active_hunts:
-        return
+    if chat_id not in active_hunts: return
 
     user_text = update.message.text.upper().strip()
-    correct_word = active_hunts[chat_id]['word']
-
-    if user_text == correct_word:
+    game = active_hunts[chat_id]
+    
+    if user_text == game['word']:
         name, uid = update.effective_user.first_name, update.effective_user.id
         if stats_col:
             stats_col.insert_one({"id": uid, "name": name, "game": "wordhunt", "time": datetime.now()})
-        
-        await update.message.reply_text(f"🥳 *CORRECT!* {name} guessed `{correct_word}`!\n+1 Point added to Leaderboard.")
+        await update.message.reply_text(f"🥳 *CORRECT!* {name} guessed `{game['word']}`!")
         del active_hunts[chat_id]
+
+async def hunt_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    word = random.choice(WORDS_DB).upper()
+    indices = random.sample(range(len(word)), 2)
+    active_hunts[chat_id] = {"word": word, "indices": indices, "hints": 0}
+    pattern = generate_pattern(word, indices)
+    kb = [[InlineKeyboardButton("💡 Hint (Max 3)", callback_data=f"hint_{chat_id}")]]
+    msg = await update.message.reply_text(f"🕵️‍♂️ *WORD HUNT START!*\n\nGuess: `{pattern}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode=constants.ParseMode.MARKDOWN)
+    asyncio.create_task(auto_delete(msg))
+
+# --- HANDLERS ---
+async def start(u, c):
+    msg = await u.message.reply_text("🎮 *Games:* /game, /rps, /hunt\n📊 *Rank:* /leaderboard")
+    asyncio.create_task(auto_delete(msg))
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    d, uid, name = q.data, q.from_user.id, q.from_user.first_name
+
+    if d.startswith("hint_"):
+        cid = int(d.split('_')[1])
+        if cid in active_hunts:
+            g = active_hunts[cid]
+            if g['hints'] < 3:
+                rem = [i for i in range(len(g['word'])) if i not in g['indices']]
+                if rem:
+                    g['indices'].append(random.choice(rem))
+                    g['hints'] += 1
+                    await q.edit_message_text(f"🕵️‍♂️ *HUNT (Hint {g['hints']}/3)*\n\nGuess: `{generate_pattern(g['word'], g['indices'])}`", reply_markup=q.message.reply_markup, parse_mode=constants.ParseMode.MARKDOWN)
+            else: await q.answer("❌ Limit reached!", show_alert=True)
+
+    elif d.startswith("lb_"):
+        await q.edit_message_text(get_leaderboard_text(d.split('_')[1]), parse_mode=constants.ParseMode.MARKDOWN, reply_markup=q.message.reply_markup)
 
 # --- MAIN ---
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
     
-    app.add_handler(CommandHandler("hunt", hunt_cmd))
-    app.add_handler(CallbackQueryHandler(handle_hint, pattern="^hint_"))
-    
-    # Important: MessageHandler MUST be added last or with a lower priority
+    # Message reader MUST be first
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), check_word))
     
-    # Add other handlers (start, game, rps, lb) here...
-    app.run_polling(drop_pending_updates=True)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("hunt", hunt_cmd))
+    app.add_handler(CommandHandler("leaderboard", lambda u,c: u.message.reply_text("Select Rank:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("XO", callback_data="lb_xo"), InlineKeyboardButton("RPS", callback_data="lb_rps"), InlineKeyboardButton("Hunt", callback_data="lb_wordhunt")]]))))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    
+    # Force updates
+    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
     
