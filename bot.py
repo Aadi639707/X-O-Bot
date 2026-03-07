@@ -145,3 +145,4 @@ if __name__ == '__main__':
     bot.add_handler(CommandHandler("leaderboard", lambda u,c: u.message.reply_text("Select Rank:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("XO", callback_data="lb_xo"), InlineKeyboardButton("RPS", callback_data="lb_rps"), InlineKeyboardButton("Hunt", callback_data="lb_wordhunt")]]))))
     bot.add_handler(CallbackQueryHandler(handle_callback))
     bot.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+        
