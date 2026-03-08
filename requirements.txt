@@ -3,3 +3,5 @@ flask
 pymongo
 dnspython
 requests
+tgcrypto
+pyrogram
