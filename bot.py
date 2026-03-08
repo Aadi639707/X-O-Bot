@@ -11,10 +11,10 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQ
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- RENDER PORT FIX ---
+# --- RENDER PORT BINDING (FLASK) ---
 web_app = Flask('')
 @web_app.route('/')
-def home(): return "Bot is Active! ⚡"
+def home(): return "Bot is Online & Watching! ⚡"
 
 def run_flask():
     port = int(os.environ.get('PORT', 8080))
@@ -25,10 +25,10 @@ API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 STRING_SESSION = os.environ.get("STRING_SESSION")
 
-# Client Setup
-app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
+# Client Setup (Self-respond enabled)
+app = Client("my_userbot", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
 
-# --- DATABASE LOGIC ---
+# --- DATABASE LOGIC (Saved Messages) ---
 async def get_db():
     try:
         async for message in app.get_chat_history("me", limit=50):
@@ -36,18 +36,24 @@ async def get_db():
                 data_str = message.text.replace("DATABASE_STATS:", "").strip()
                 return json.loads(data_str), message.id
         return {}, None
-    except:
+    except Exception as e:
+        logger.error(f"DB Error: {e}")
         return {}, None
 
 async def save_win(uid, name, game_type):
     data, msg_id = await get_db()
     u_id = str(uid)
-    if u_id not in data: data[u_id] = {"name": name, "xo": 0, "rps": 0, "total": 0}
+    if u_id not in data: 
+        data[u_id] = {"name": name, "xo": 0, "rps": 0, "total": 0}
+    
     data[u_id][game_type] += 1
     data[u_id]["total"] += 1
     db_text = f"DATABASE_STATS:\n{json.dumps(data, indent=4)}"
-    if msg_id: await app.edit_message_text("me", msg_id, db_text)
-    else: await app.send_message("me", db_text)
+    
+    if msg_id: 
+        await app.edit_message_text("me", msg_id, db_text)
+    else: 
+        await app.send_message("me", db_text)
 
 # --- XO WIN LOGIC ---
 def check_win(b):
@@ -62,20 +68,31 @@ def check_win(b):
 # --- STATE ---
 games = {}
 
-# --- HANDLERS ---
-@app.on_message(filters.command("start"))
+# --- HANDLERS (Works for ME and OTHERS) ---
+# Prefixes: / and . both supported
+@app.on_message(filters.command(["start", "help"], prefixes=["/", "."]) & (filters.me | ~filters.me))
 async def start_h(c, m):
-    await m.reply("🎮 **Arena Online!**\nUse /game to play.")
+    await m.reply("🎮 **Arena is Live!**\nCommands: `.game` or `/game` to play XO.")
 
-@app.on_message(filters.command("game"))
+@app.on_message(filters.command("game", prefixes=["/", "."]) & (filters.me | ~filters.me))
 async def game_h(c, m):
     gid = str(m.id)
-    games[gid] = {'board': [[" "]*3 for _ in range(3)], 'turn': 'X', 'p1': m.from_user.id, 'n1': m.from_user.first_name, 'p2': None, 'n2': None}
-    await m.reply("🎮 **XO Match!**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join", f"j_{gid}")]]))
+    games[gid] = {
+        'board': [[" "]*3 for _ in range(3)], 
+        'turn': 'X', 
+        'p1': m.from_user.id, 
+        'n1': m.from_user.first_name, 
+        'p2': None, 'n2': None
+    }
+    await m.reply(
+        "🎮 **XO Match!**", 
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Join Match", f"j_{gid}")]])
+    )
 
 @app.on_callback_query()
 async def cb_h(c, q: CallbackQuery):
     uid, name, d = q.from_user.id, q.from_user.first_name, q.data
+    
     if d.startswith("j_"):
         gid = d.split("_")[1]
         if gid in games and games[gid]['p1'] != uid and games[gid]['p2'] is None:
@@ -87,21 +104,30 @@ async def cb_h(c, q: CallbackQuery):
         gid, r, c = d.split("_")[1], int(d.split("_")[2]), int(d.split("_")[3])
         if gid not in games: return
         g = games[gid]
-        if uid != (g['p1'] if g['turn'] == 'X' else g['p2']) or g['board'][r][c] != " ": return
+        
+        # Turn check
+        if uid != (g['p1'] if g['turn'] == 'X' else g['p2']) or g['board'][r][c] != " ":
+            return
+            
         g['board'][r][c] = g['turn']
         res = check_win(g['board'])
         kb = [[InlineKeyboardButton(g['board'][rr][cc] if g['board'][rr][cc] != " " else "·", f"m_{gid}_{rr}_{cc}") for cc in range(3)] for rr in range(3)]
+        
         if res:
-            msg = "🤝 Draw!" if res == "Draw" else f"🏆 Winner: {name}!"
+            msg = "🤝 Match Draw!" if res == "Draw" else f"🏆 Winner: {name}!"
             if res != "Draw": await save_win(uid, name, "xo")
             await q.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb))
             del games[gid]
         else:
             g['turn'] = 'O' if g['turn'] == 'X' else 'X'
-            await q.edit_message_text(f"Turn: {g['n1'] if g['turn'] == 'X' else g['n2']} ({g['turn']})", reply_markup=InlineKeyboardMarkup(kb))
+            current_n = g['n1'] if g['turn'] == 'X' else g['n2']
+            await q.edit_message_text(f"⚔️ {g['n1']} vs {g['n2']}\nTurn: {current_n} ({g['turn']})", reply_markup=InlineKeyboardMarkup(kb))
 
-# --- MAIN ---
+# --- MAIN RUNNER ---
 if __name__ == "__main__":
+    # Flask for Render Port Scan
     Thread(target=run_flask).start()
+    # Pyrogram Client
+    print("Bot is starting... try .game or /game in any chat.")
     app.run()
     
