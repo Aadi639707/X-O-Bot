@@ -2,34 +2,50 @@ import os
 import json
 import asyncio
 import logging
+from flask import Flask
+from threading import Thread
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 
-# --- LOGGING ---
+# --- LOGGING SETUP ---
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- RENDER PORT FIX (FLASK) ---
+# Ye Render ke 'No open ports' error ko fix karne ke liye hai
+web_app = Flask('')
+
+@web_app.route('/')
+def home():
+    return "Bot is Running & Port is Active! ⚡"
+
+def run_flask():
+    port = int(os.environ.get('PORT', 8080))
+    web_app.run(host='0.0.0.0', port=port)
 
 # --- CONFIG ---
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 STRING_SESSION = os.environ.get("STRING_SESSION")
 
-app = Client("my_session_bot", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
+# Client Setup (String Session)
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
 
-# --- STATE ---
+# --- GLOBAL STATE ---
 games = {}
 rps_games = {}
 
-# --- DATABASE LOGIC (Saved Messages / String Session) ---
+# --- DATABASE LOGIC (Saved Messages / Cloud Storage) ---
 async def get_db():
     try:
-        # Search for the database message in your Saved Messages
+        # Saved Messages (me) se DB message search karna
         async for message in app.get_chat_history("me", limit=50):
             if message.text and "DATABASE_STATS:" in message.text:
                 data_str = message.text.replace("DATABASE_STATS:", "").strip()
                 return json.loads(data_str), message.id
         return {}, None
     except Exception as e:
-        logging.error(f"DB Load Error: {e}")
+        logger.error(f"DB Load Error: {e}")
         return {}, None
 
 async def save_win(uid, name, game_type):
@@ -62,8 +78,8 @@ def check_win(b):
 
 # --- COMMANDS ---
 @app.on_message(filters.command("start"))
-async def start_cmd(client, message):
-    await message.reply("🎮 **Gaming Arena (String Session Mode)**\n\n/game - TicTacToe\n/rps - Rock Paper Scissors\n/leaderboard - Stats")
+async def start_handler(client, message):
+    await message.reply("🎮 **Mega Arena Active!**\n\n/game - TicTacToe (XO)\n/rps - Rock Paper Scissors\n/leaderboard - Stats")
 
 @app.on_message(filters.command("game") & filters.group)
 async def game_cmd(client, message):
@@ -81,15 +97,15 @@ async def rps_cmd(client, message):
 async def lb_cmd(client, message):
     data, _ = await get_db()
     sorted_data = sorted(data.items(), key=lambda x: x[1]['total'], reverse=True)[:10]
-    text = "🏆 **TOP 10 CHAMPIONS (OVERALL)**\n\n"
-    if not sorted_data: text += "No records yet!"
+    text = "🏆 **TOP 10 CHAMPIONS**\n\n"
+    if not sorted_data: text += "No records found!"
     for i, (uid, info) in enumerate(sorted_data):
         text += f"{i+1}. [{info['name']}](tg://user?id={uid}) — `{info['total']} Wins`\n"
-    await message.reply(text, disable_web_page_preview=True)
+    await message.reply(text)
 
 # --- CALLBACK HANDLER ---
 @app.on_callback_query()
-async def handle_cb(client, q: CallbackQuery):
+async def handle_callback(client, q: CallbackQuery):
     uid, name, d = q.from_user.id, q.from_user.first_name, q.data
 
     # --- XO LOGIC ---
@@ -117,8 +133,8 @@ async def handle_cb(client, q: CallbackQuery):
             del games[gid]
         else:
             g['turn'] = 'O' if g['turn'] == 'X' else 'X'
-            current_n = g['n1'] if g['turn'] == 'X' else g['n2']
-            await q.edit_message_text(f"⚔️ {g['n1']} vs {g['n2']}\nTurn: {current_n} ({g['turn']})", reply_markup=InlineKeyboardMarkup(kb))
+            current_turn_name = g['n1'] if g['turn'] == 'X' else g['n2']
+            await q.edit_message_text(f"⚔️ {g['n1']} vs {g['n2']}\nTurn: {current_turn_name} ({g['turn']})", reply_markup=InlineKeyboardMarkup(kb))
 
     # --- RPS LOGIC ---
     elif d.startswith("rj_"):
@@ -128,11 +144,11 @@ async def handle_cb(client, q: CallbackQuery):
             await q.edit_message_text(f"🥊 {g['n1']} vs {g['n2']}\nChoose:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🪨 Rock", f"rm_{rid}_R"), InlineKeyboardButton("📄 Paper", f"rm_{rid}_P"), InlineKeyboardButton("✂️ Scissors", f"rm_{rid}_S")]]))
 
     elif d.startswith("rm_"):
-        rid, move = d.split("_")[1], d.split("_")[2]
+        rid, m = d.split("_")[1], d.split("_")[2]
         if rid not in rps_games: return
         g = rps_games[rid]
-        if uid == g['p1'] and not g['m1']: g['m1'] = move
-        elif uid == g['p2'] and not g['m2']: g['m2'] = move
+        if uid == g['p1'] and not g['m1']: g['m1'] = m
+        elif uid == g['p2'] and not g['m2']: g['m2'] = m
         else: return
 
         if g['m1'] and g['m2']:
@@ -147,7 +163,10 @@ async def handle_cb(client, q: CallbackQuery):
             if win_id: await save_win(win_id, win_n, "rps")
             del rps_games[rid]
 
-# --- RUN ---
-print("Bot is Starting... Check your Saved Messages for Database!")
-app.run()
-            
+# --- START BOT ---
+if __name__ == "__main__":
+    # Start Flask Port-binding in background
+    Thread(target=run_flask).start()
+    print("Web Port binding active. Starting Pyrogram Bot...")
+    app.run()
+    
